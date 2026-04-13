@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-cost-tracker"
+version = "0.1.0"
+description = "Track LLM API costs per request. Know where your tokens go."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["llm", "cost", "tracking", "openai", "anthropic", "tokens", "api", "usage"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/batish52/llm-cost-tracker"
+Documentation = "https://github.com/batish52/llm-cost-tracker#readme"
+Issues = "https://github.com/batish52/llm-cost-tracker/issues"
+
+[tool.setuptools.packages.find]
+include = ["llm_cost_tracker*"]
