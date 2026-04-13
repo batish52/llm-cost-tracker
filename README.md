@@ -5,7 +5,7 @@
 Zero dependencies. Pure Python. Works with any LLM provider.
 
 ```bash
-pip install llm-cost-tracker
+pip install llm-costlog
 ```
 
 ## Quickstart
