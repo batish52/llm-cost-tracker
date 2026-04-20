@@ -107,6 +107,30 @@ print(f"Net savings: ${snapshot['net_savings_conservative_usd']:.4f}")
 for s in tracker.snapshots(limit=7):
     print(f"{s['job_name']}: saved ${s['saved_full_modeled_usd']:.4f}, spent ${s['external_cost_usd']:.4f}")
 ```
+## Waste score trend (v0.2.0)
+
+Track how your efficiency improves over time. The waste score is the percentage of external API calls that were avoidable.
+
+```python
+trend = tracker.waste_score_trend(days=30)
+print(trend["summary"])
+# Waste score: 20.0% (↓ improving). 43 of 71 external calls were avoidable ($0.03 wasted) over 30 days.
+
+print(f"Direction: {trend['direction']}")      # improving / worsening / stable
+print(f"Current: {trend['current_score']}%")   # today's waste score
+print(f"Best: {trend['best_score']}%")         # lowest waste score achieved
+
+for point in trend["trend"]:
+    print(f"  {point['date']}  waste={point['waste_score']}%  ({point['avoidable']}/{point['external']} avoidable)")
+```
+
+Output:
+```
+  2026-04-12  waste=75.0%  (12/16 avoidable)
+  2026-04-14  waste=66.7%  (8/12 avoidable)
+  2026-04-16  waste=50.0%  (4/8 avoidable)
+  2026-04-18  waste=20.0%  (1/5 avoidable)
+```
 
 ## Built-in pricing (40+ models)
 
