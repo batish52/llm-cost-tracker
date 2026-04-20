@@ -203,9 +203,72 @@ def test_zero_dependency():
                     assert pkg in {
                         "__future__", "json", "time", "uuid", "hashlib",
                         "math", "sqlite3", "pathlib", "re", "typing",
+                        "datetime",
                     }, f"Non-stdlib import found: {stripped}"
 
     print("  test_zero_dependency: PASS")
+
+
+def test_waste_score_trend():
+    with tempfile.TemporaryDirectory() as td:
+        db = Path(td) / "test.db"
+        tracker = CostTracker(db)
+
+        import time as _time
+
+        # Simulate 5 days of usage with improving efficiency
+        now = _time.time()
+        for day in range(5):
+            day_offset = (4 - day) * 86400  # oldest first
+            # Day 0-1: lots of waste (many avoidable external calls)
+            # Day 4: less waste (more local routing)
+            avoidable_external = max(1, 8 - day * 2)
+            necessary_external = 3
+            local_calls = 2 + day * 3
+
+            for _ in range(avoidable_external):
+                tracker.record(
+                    prompt_tokens=200, completion_tokens=50,
+                    model="gpt-4o", provider="openai",
+                    intent="code_lookup",
+                )
+
+            for _ in range(necessary_external):
+                tracker.record(
+                    prompt_tokens=2000, completion_tokens=1500,
+                    model="gpt-4o", provider="openai",
+                    intent="architecture_review",
+                )
+
+            for _ in range(local_calls):
+                tracker.record(
+                    prompt_tokens=0, completion_tokens=0,
+                    model="gpt-4o-mini", provider="openai",
+                    route="local", prompt_text="where is auth defined",
+                    intent="code_lookup",
+                )
+
+        trend = tracker.waste_score_trend(days=30, bucket_size="1d")
+
+        assert "trend" in trend
+        assert "current_score" in trend
+        assert "best_score" in trend
+        assert "direction" in trend
+        assert "summary" in trend
+        assert len(trend["trend"]) > 0
+        assert trend["data_points"] > 0
+        assert trend["total_avoidable_requests"] > 0
+        assert trend["overall_waste_score"] > 0
+
+        # Verify trend points have required fields
+        point = trend["trend"][0]
+        assert "date" in point
+        assert "waste_score" in point
+        assert "local_percent" in point
+        assert "total" in point
+        assert "avoidable" in point
+
+    print("  test_waste_score_trend: PASS")
 
 
 def run_tests():
@@ -219,6 +282,7 @@ def run_tests():
     test_approx_tokens()
     test_session_filter()
     test_metadata()
+    test_waste_score_trend()
     test_zero_dependency()
     print("\nAll tests passed!")
 

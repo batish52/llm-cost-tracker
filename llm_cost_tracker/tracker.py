@@ -470,6 +470,144 @@ class CostTracker:
         finally:
             conn.close()
 
+    def waste_score_trend(
+        self,
+        *,
+        days: int = 30,
+        bucket_size: str = "1d",
+    ) -> dict:
+        """Calculate waste score over time — shows how your efficiency improves.
+
+        The waste score is the percentage of external API calls that were
+        avoidable (simple lookups, config checks, etc. that didn't need an LLM).
+        A dropping waste score means you're routing smarter over time.
+
+        Args:
+            days: How many days back to analyze.
+            bucket_size: Group into "1d" (daily), "7d" (weekly), or "1h" (hourly) buckets.
+
+        Returns:
+            Dict with trend data points, current score, best score, and direction.
+
+        Usage:
+            trend = tracker.waste_score_trend(days=30)
+            print(f"Current waste score: {trend['current_score']}%")
+            print(f"Best score: {trend['best_score']}%")
+            print(f"Direction: {trend['direction']}")
+            for point in trend['trend']:
+                print(f"  {point['date']}: {point['waste_score']}% waste ({point['avoidable']}/{point['external']} external calls)")
+        """
+        conn = self._connect()
+        try:
+            now = time.time()
+            cutoff = now - (days * 86400)
+            bucket_seconds = self._parse_window(bucket_size) or 86400
+
+            avoidable_intents = {
+                "code_lookup", "config_lookup", "symbol_lookup",
+                "file_search", "diagnostics", "status_check",
+                "runtime_diagnostics", "config_manifest_lookup",
+                "repo_navigation", "exact_body",
+            }
+
+            rows = conn.execute(
+                "SELECT route_mode, intercept_class, cost_usd, created_at "
+                "FROM request_usage_ledger WHERE created_at >= ? ORDER BY created_at",
+                (cutoff,),
+            ).fetchall()
+
+            # Group into time buckets
+            buckets: dict[int, dict] = {}
+            for r in rows:
+                ts = _to_float(r["created_at"])
+                bucket_key = int((ts - cutoff) // bucket_seconds)
+                if bucket_key not in buckets:
+                    buckets[bucket_key] = {
+                        "total": 0, "local": 0, "external": 0,
+                        "avoidable": 0, "avoidable_cost": 0.0,
+                        "timestamp": cutoff + (bucket_key * bucket_seconds),
+                    }
+                b = buckets[bucket_key]
+                b["total"] += 1
+                route = r["route_mode"] or ""
+                intent = (r["intercept_class"] or "").lower()
+
+                if "local" in route:
+                    b["local"] += 1
+                elif "external" in route:
+                    b["external"] += 1
+                    if intent in avoidable_intents:
+                        b["avoidable"] += 1
+                        b["avoidable_cost"] += _to_float(r["cost_usd"])
+
+            # Build trend points
+            from datetime import datetime, timezone
+            trend = []
+            for key in sorted(buckets.keys()):
+                b = buckets[key]
+                ext = b["external"]
+                waste_score = round((b["avoidable"] / max(1, ext)) * 100, 1) if ext > 0 else 0.0
+                local_pct = round((b["local"] / max(1, b["total"])) * 100, 1) if b["total"] > 0 else 0.0
+                dt = datetime.fromtimestamp(b["timestamp"], tz=timezone.utc)
+                trend.append({
+                    "date": dt.strftime("%Y-%m-%d") if bucket_seconds >= 86400 else dt.strftime("%Y-%m-%d %H:%M"),
+                    "waste_score": waste_score,
+                    "local_percent": local_pct,
+                    "total": b["total"],
+                    "local": b["local"],
+                    "external": ext,
+                    "avoidable": b["avoidable"],
+                    "avoidable_cost_usd": round(b["avoidable_cost"], 6),
+                })
+
+            # Summary stats
+            scores = [p["waste_score"] for p in trend if p["external"] > 0]
+            current_score = scores[-1] if scores else 0.0
+            best_score = min(scores) if scores else 0.0
+            worst_score = max(scores) if scores else 0.0
+
+            # Direction: compare last 3 buckets vs first 3 buckets
+            if len(scores) >= 6:
+                early_avg = sum(scores[:3]) / 3
+                late_avg = sum(scores[-3:]) / 3
+                if late_avg < early_avg - 2:
+                    direction = "improving"
+                elif late_avg > early_avg + 2:
+                    direction = "worsening"
+                else:
+                    direction = "stable"
+            elif len(scores) >= 2:
+                direction = "improving" if scores[-1] < scores[0] else ("worsening" if scores[-1] > scores[0] else "stable")
+            else:
+                direction = "insufficient_data"
+
+            # Total avoidable across all time
+            total_avoidable = sum(p["avoidable"] for p in trend)
+            total_external = sum(p["external"] for p in trend)
+            total_avoidable_cost = sum(p["avoidable_cost_usd"] for p in trend)
+            overall_waste = round((total_avoidable / max(1, total_external)) * 100, 1) if total_external > 0 else 0.0
+
+            return {
+                "trend": trend,
+                "current_score": current_score,
+                "best_score": best_score,
+                "worst_score": worst_score,
+                "overall_waste_score": overall_waste,
+                "direction": direction,
+                "total_avoidable_requests": total_avoidable,
+                "total_avoidable_cost_usd": round(total_avoidable_cost, 6),
+                "days_analyzed": days,
+                "bucket_size": bucket_size,
+                "data_points": len(trend),
+                "summary": (
+                    f"Waste score: {current_score}% ({'↓' if direction == 'improving' else '↑' if direction == 'worsening' else '→'} {direction}). "
+                    f"{total_avoidable} of {total_external} external calls were avoidable "
+                    f"(${round(total_avoidable_cost, 2)} wasted) over {days} days."
+                ),
+            }
+        finally:
+            conn.close()
+
     @staticmethod
     def _parse_window(window: str | None) -> int | None:
         if not window:

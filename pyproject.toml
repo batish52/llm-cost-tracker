@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-cost-tracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Track LLM API costs per request. Know where your tokens go."
 readme = "README.md"
 license = {text = "MIT"}
@@ -25,9 +25,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/batish52/llm-cost-tracker"
-Documentation = "https://github.com/batish52/llm-cost-tracker#readme"
-Issues = "https://github.com/batish52/llm-cost-tracker/issues"
+Homepage = "https://github.com/yourusername/llm-cost-tracker"
+Documentation = "https://github.com/yourusername/llm-cost-tracker#readme"
+Issues = "https://github.com/yourusername/llm-cost-tracker/issues"
 
 [tool.setuptools.packages.find]
 include = ["llm_cost_tracker*"]

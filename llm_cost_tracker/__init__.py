@@ -35,5 +35,5 @@ Usage:
 from .tracker import CostTracker
 from .pricing import DEFAULT_PRICING, lookup_pricing, approx_tokens
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["CostTracker", "DEFAULT_PRICING", "lookup_pricing", "approx_tokens"]
