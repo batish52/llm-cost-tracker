@@ -71,12 +71,22 @@ CREATE INDEX IF NOT EXISTS idx_cost_snapshots_created ON cost_snapshots(created_
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=15.0, isolation_level=None)
+    # isolation_level="" keeps Python's sqlite3 driver in its default deferred-
+    # transaction mode, so the `conn.commit()` calls that callers make actually
+    # commit something. Previously this was `isolation_level=None` (autocommit)
+    # combined with an explicit `BEGIN;` + `conn.commit()`, which meant the
+    # driver didn't track the transaction the BEGIN opened; every caller's
+    # `commit()` was a no-op and schema creation only worked by accident
+    # because SQLite itself handled the raw BEGIN/COMMIT pair.
+    conn = sqlite3.connect(str(db_path), timeout=15.0, isolation_level="")
     conn.row_factory = sqlite3.Row
+    # PRAGMAs are fine outside a transaction; commit after each to avoid any
+    # ambiguity about transactional state.
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA busy_timeout=15000;")
-    conn.execute("BEGIN;")
+    conn.commit()
+    # Schema DDL in its own transaction.
     conn.executescript(SCHEMA)
     conn.commit()
     return conn

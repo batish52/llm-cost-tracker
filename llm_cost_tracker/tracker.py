@@ -118,7 +118,10 @@ class CostTracker:
                 cf_prompt = approx_tokens(prompt_text)
                 estimation_method = "approx_from_prompt_text"
             elif route_mode == "local_only" and cf_prompt == 0:
-                cf_prompt = prompt_tokens if prompt_tokens > 0 else 100
+                # cf_prompt was initialised to prompt_tokens on the line
+                # above; the only way it is 0 here is prompt_tokens == 0.
+                # Fall back to a small default so savings aren't zeroed.
+                cf_prompt = 100
                 estimation_method = "fallback_estimate"
 
             cf_total = cf_prompt + cf_completion
@@ -181,7 +184,8 @@ class CostTracker:
         """Generate a cost report.
 
         Args:
-            window: Time window like "1d", "7d", "30d", "1h".
+            window: Time window like "1d", "7d", "30d", "1h". If None,
+                aggregates over all recorded requests (no time filter).
             session_key: Filter to a specific session.
             group_by: Group results by "model", "provider", "route", "intent", or "session".
             limit: Max rows to scan.
@@ -566,18 +570,29 @@ class CostTracker:
             best_score = min(scores) if scores else 0.0
             worst_score = max(scores) if scores else 0.0
 
-            # Direction: compare last 3 buckets vs first 3 buckets
+            # Direction: compare last 3 buckets vs first 3 buckets.
+            # Use a relative-change threshold of ~15% of the early average
+            # (with a 2pp absolute floor so tiny absolute changes at low
+            # waste scores don't trigger flips) to reduce noise-driven flips.
             if len(scores) >= 6:
                 early_avg = sum(scores[:3]) / 3
                 late_avg = sum(scores[-3:]) / 3
-                if late_avg < early_avg - 2:
+                threshold = max(2.0, 0.15 * early_avg)
+                if late_avg < early_avg - threshold:
                     direction = "improving"
-                elif late_avg > early_avg + 2:
+                elif late_avg > early_avg + threshold:
                     direction = "worsening"
                 else:
                     direction = "stable"
             elif len(scores) >= 2:
-                direction = "improving" if scores[-1] < scores[0] else ("worsening" if scores[-1] > scores[0] else "stable")
+                # Small-N: require at least 2pp change, same as large-N floor.
+                delta = scores[-1] - scores[0]
+                if delta < -2.0:
+                    direction = "improving"
+                elif delta > 2.0:
+                    direction = "worsening"
+                else:
+                    direction = "stable"
             else:
                 direction = "insufficient_data"
 

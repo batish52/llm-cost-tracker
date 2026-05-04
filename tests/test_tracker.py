@@ -203,7 +203,7 @@ def test_zero_dependency():
                     assert pkg in {
                         "__future__", "json", "time", "uuid", "hashlib",
                         "math", "sqlite3", "pathlib", "re", "typing",
-                        "datetime",
+                        "datetime", "logging",
                     }, f"Non-stdlib import found: {stripped}"
 
     print("  test_zero_dependency: PASS")
@@ -214,39 +214,66 @@ def test_waste_score_trend():
         db = Path(td) / "test.db"
         tracker = CostTracker(db)
 
+        import sqlite3 as _sqlite3
         import time as _time
 
-        # Simulate 5 days of usage with improving efficiency
+        # Simulate 5 days of usage with improving efficiency.
+        # The earlier implementation computed `day_offset` but never applied
+        # it, so every record landed in the same "now" bucket — the test
+        # only verified the API shape, not the multi-day trend behaviour.
+        # We insert normally then rewrite `created_at` via direct SQL so the
+        # trend-by-bucket logic actually sees distinct days.
         now = _time.time()
+        inserted_by_day: list[list[str]] = []  # list of request_ids per day
         for day in range(5):
-            day_offset = (4 - day) * 86400  # oldest first
-            # Day 0-1: lots of waste (many avoidable external calls)
-            # Day 4: less waste (more local routing)
+            day_ids: list[str] = []
+            # Day 0: most waste (many avoidable external calls, few local)
+            # Day 4: least waste (fewer avoidable, more local)
             avoidable_external = max(1, 8 - day * 2)
             necessary_external = 3
             local_calls = 2 + day * 3
 
             for _ in range(avoidable_external):
-                tracker.record(
+                r = tracker.record(
                     prompt_tokens=200, completion_tokens=50,
                     model="gpt-4o", provider="openai",
                     intent="code_lookup",
                 )
+                day_ids.append(r["request_id"])
 
             for _ in range(necessary_external):
-                tracker.record(
+                r = tracker.record(
                     prompt_tokens=2000, completion_tokens=1500,
                     model="gpt-4o", provider="openai",
                     intent="architecture_review",
                 )
+                day_ids.append(r["request_id"])
 
             for _ in range(local_calls):
-                tracker.record(
+                r = tracker.record(
                     prompt_tokens=0, completion_tokens=0,
                     model="gpt-4o-mini", provider="openai",
                     route="local", prompt_text="where is auth defined",
                     intent="code_lookup",
                 )
+                day_ids.append(r["request_id"])
+
+            inserted_by_day.append(day_ids)
+
+        # Backdate each day's records so they fall in distinct daily buckets.
+        # Day 0 is the oldest (4 days ago), day 4 is today.
+        conn = _sqlite3.connect(str(db))
+        try:
+            for day, ids in enumerate(inserted_by_day):
+                ts = now - (4 - day) * 86400 + 3600  # put 1h into the day
+                for rid in ids:
+                    conn.execute(
+                        "UPDATE request_usage_ledger SET created_at = ? WHERE request_id = ?",
+                        (ts, rid),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
 
         trend = tracker.waste_score_trend(days=30, bucket_size="1d")
 
@@ -255,10 +282,17 @@ def test_waste_score_trend():
         assert "best_score" in trend
         assert "direction" in trend
         assert "summary" in trend
-        assert len(trend["trend"]) > 0
-        assert trend["data_points"] > 0
+        assert len(trend["trend"]) >= 2, f"expected multiple day buckets, got {len(trend['trend'])}"
+        assert trend["data_points"] >= 2
         assert trend["total_avoidable_requests"] > 0
         assert trend["overall_waste_score"] > 0
+
+        # With day 0 having the most waste and day 4 the least, early bucket
+        # waste score should be >= late bucket waste score.
+        scores_with_ext = [p["waste_score"] for p in trend["trend"] if p["external"] > 0]
+        assert scores_with_ext[0] >= scores_with_ext[-1], (
+            f"expected improving waste over time, got {scores_with_ext}"
+        )
 
         # Verify trend points have required fields
         point = trend["trend"][0]
